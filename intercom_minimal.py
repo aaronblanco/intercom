@@ -47,16 +47,18 @@ import socket
 
 # Used for implementing a FIFO queue of chunks of audio. See:
 # https://docs.python.org/3/library/queue.html
-import queue
+
 
 # Process and system monitoring. See:
 # https://pypi.org/project/psutil/
 try:
     import psutil
 except ModuleNotFoundError:
-    import os
-    os.system("pip3 install psutil --user")
-    import psutil
+   import os
+   os.system("pip3 install psutil --user")
+   import psutil
+#
+from multiprocessing import Process
 
 # Accumulated CPU usage.
 CPU_total = 0
@@ -95,11 +97,11 @@ class Intercom_minimal:
 
     # [Port](https://en.wikipedia.org/wiki/Port_(computer_networking))
     # that my machine will use to listen to the incomming packets.
-    MY_PORT = 5555
+    MY_PORT = 5556
 
     # Port that my interlocutor's machine will use to listen to the
     # incomming packets.
-    DESTINATION_PORT = 4444
+    DESTINATION_PORT = 5556
 
     # [Hostname](https://en.wikipedia.org/wiki/Hostname) or [IP
     # address](https://en.wikipedia.org/wiki/IP_address) of my
@@ -141,8 +143,7 @@ class Intercom_minimal:
         self.receiving_sock.bind(self.listening_endpoint)
 
         # A queue to store up to 100 chunks.
-        self.q = queue.Queue(maxsize=100)
-
+        # should i delete this line
         print(f"Intercom_minimal: number_of_channels={self.number_of_channels}")
         print(f"Intercom_minimal: frames_per_second={self.frames_per_second}")
         print(f"Intercom_minimal: frames_per_chunk={self.frames_per_chunk}")
@@ -209,7 +210,12 @@ class Intercom_minimal:
         # this is a pointers copy ([shallow
         # copy](https://docs.python.org/3.8/library/copy.html)), not a
         # contents copy (deep copy).
-        self.q.put(chunk)
+        self.put(chunk)
+
+        #import time
+        #time.sleep(0.1)
+        for i in range(10000000):
+            pass
 
     # Shows CPU usage.
     def feedback(self):
@@ -238,19 +244,30 @@ class Intercom_minimal:
     # for a deeper description of the callback function.
     def record_send_and_play(self, indata, outdata, frames, time, status):
         # Send the chunk.
+        
         self.send(indata)
-
+        ## receivtry:
         try:
-            chunk = self.q.get_nowait()
-        except queue.Empty:
-            chunk = self.zero_chunk # Shallow copy
-
+            chunk = self.receive()
+        except chunk is None:
+            chunk = self.zero_chunk 
+        
+      
+        chunk = np.frombuffer(chunk, np.int16).reshape(self.frames_per_chunk, self.number_of_channels)
+     
         # Copy the data of chunk to outdata using slicing. Notice that
         # "outdata = chunk" only would copy pointers to objects (.
+        
+        
+        ## PLAY
         outdata[:] = chunk
 
         # Feedback message (one per chunk).
         self.feedback()
+
+    def forever(self):
+        while True:
+            self.receive_and_queue()
 
     # Runs the intercom.
     def run(self):
@@ -260,9 +277,12 @@ class Intercom_minimal:
                        channels=self.number_of_channels,
                        callback=self.record_send_and_play):
             print("Intercom_minimal: press <CTRL> + <c> to quit")
-            while True:
-                self.receive_and_queue()
-
+            p = Process(target=self.record_send_and_play)
+            p.start()
+            #self.forever()
+            #while True:
+            #    self.receive_and_queue()
+            
     # Define the command-line arguments.
     def add_args(self):
         parser = argparse.ArgumentParser(description="Real-Time Audio Intercommunicator",
