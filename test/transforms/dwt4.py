@@ -21,7 +21,8 @@ def int_or_str(text):
     except ValueError:
         return text
 
-parser = argparse.ArgumentParser(description=__doc__)
+parser = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument(
     '-l', '--list-devices', action='store_true',
     help='show list of audio devices and exit')
@@ -36,6 +37,10 @@ parser.add_argument(
 parser.add_argument(
     '-r', '--samplerate', type=float, default=44100, help='sampling rate of audio device')
 parser.add_argument(
+    '-v', '--levels', type=int, default=5, help='number of levels of the DWT')
+parser.add_argument(
+    '-w', '--wavelet', type=str, default="db5", help=f'wavelet name from {pywt.wavelist()}')
+parser.add_argument(
     'channels', type=int, default=[1, 2], nargs='*', metavar='CHANNEL',
     help='input channels to plot (default: the first)')
 args = parser.parse_args()
@@ -44,10 +49,12 @@ if any(c < 1 for c in args.channels):
 mapping = [c - 1 for c in args.channels]  # Channel numbers start with 1
 q = queue.Queue()
 
-kernel = "db5"
+kernel = args.wavelet
+print("kernel =", args.wavelet)
 wavelet = pywt.Wavelet(kernel)
-levels = 5
-overlaped_area_size = wavelet.dec_len * levels
+print("levels =", args.levels)
+overlaped_area_size = wavelet.dec_len * args.levels
+overlaped_area_size = 1<<math.ceil(math.log(overlaped_area_size)/math.log(2))
 print("overlaped_area_size =", overlaped_area_size)
 overlaped_area = np.zeros((overlaped_area_size, len(args.channels)), dtype=np.int16)
 frames_per_chunk = args.blocksize + overlaped_area_size
@@ -58,22 +65,15 @@ def audio_callback(indata, frames, time, status):
     extended_chunk = np.concatenate((overlaped_area, indata), axis=0)
     coeffs = [None]*len(args.channels)
     for c in range(len(args.channels)):
-        coeffs_ = pywt.wavedec(extended_chunk[:, c], wavelet=wavelet, level=levels, mode="per")
-        oas = 1<<math.ceil(math.log(overlaped_area_size)/math.log(2))
-        #oas = overlaped_area_size
-        bs = args.blocksize
+        coeffs_ = pywt.wavedec(extended_chunk[:, c], wavelet=wavelet, level=args.levels, mode="per")
+        oas = overlaped_area_size
+        #bs = args.blocksize
         for i in range(len(coeffs_)-1, 0, -1):
-            oas = int(math.floor(oas/2))
+            #oas = int(math.floor(oas/2))
+            oas >>= 1
             coeffs_[i] = coeffs_[i][oas:len(coeffs_[i])-oas]
-            #coeffs_[i] = coeffs_[i][oas:len(coeffs_[i])]
-            #coeffs_[i] = coeffs_[i][oas:bs+
-            print(i, len(coeffs_[i]))
         coeffs_[0] = coeffs_[0][oas:len(coeffs_[0])-oas]
-        print(0, len(coeffs_[0]))
         coeffs[c], slices = pywt.coeffs_to_array(coeffs_)
-        print(slices)
-        #print(coeffs[c].shape)
-        #coeffs[c] = 20*np.log10(coeffs[c]+1)
     both_channels = np.stack(coeffs)
     q.put(both_channels)
     overlaped_area = indata[ args.blocksize : args.blocksize + overlaped_area_size ]
